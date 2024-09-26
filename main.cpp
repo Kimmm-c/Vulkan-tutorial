@@ -77,6 +77,10 @@ class TriangleApp {
     GLFWwindow *window;
     VkInstance instance;
     VkDebugUtilsMessengerEXT debugMessenger;
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+    VkDevice logicalDevice; // Logical device
+    VkQueue graphicsQueue;
+//    vector<const char*> requiredExtensions;
 
     // Conditionally turn on the validation layers if the program is compiled in debug mode. Otherwise, turn off the validation layers to improve performance.
     const vector<const char *> validationLayers{"VK_LAYER_KHRONOS_validation"};
@@ -131,12 +135,45 @@ private:
         createInstance();
         setupDebugMessenger();
 
-        // Pick a physical device (a graphic card) the supports the Vulkan library features.
+        // Pick a physical device (a graphic card) that supports the Vulkan library features.
         pickPhysicalDevice();
+
+        // Create a logical device. This device is the middle layer/translator that enables the communication between your app and the physical device.
+        createLogicalDevice();
+    }
+
+    void createLogicalDevice() {
+        // Specify queue info and create queues
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value(); // For now, we're only interested in the queue with graphics capabilities.
+        queueCreateInfo.queueCount = 1;
+
+        float queuePriority = 1.0f; // This priority will influence the scheduling of command buffer execution.
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+
+        // Specify required device features
+        VkPhysicalDeviceFeatures deviceFeatures{};
+
+
+        // Creating the Logical device
+        VkDeviceCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        createInfo.pQueueCreateInfos = &queueCreateInfo;
+        createInfo.queueCreateInfoCount = 1;
+        createInfo.pEnabledFeatures = &deviceFeatures;
+
+        if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &logicalDevice)) {
+            throw runtime_error("Failed to create logical device");
+        }
+
+        // Retrieve queue for later interactions
+        vkGetDeviceQueue(logicalDevice, indices.graphicsFamily.value(), 0, &graphicsQueue);
     }
 
     void pickPhysicalDevice() {
-        VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
         // Get all available graphics cards
         uint32_t deviceCount = 0;
@@ -186,7 +223,7 @@ private:
 
         // Find a queue family that support VK_QUEUE_GRAPHICS_BIT and assign its index to graphicsFamily
         int i = 0;
-        for (const auto& queueFamily : queueFamilies) {
+        for (const auto &queueFamily: queueFamilies) {
             if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                 indices.graphicsFamily = i;
             }
@@ -220,10 +257,12 @@ private:
         // Maximum possible size of textures affects graphics quality
         score += deviceProperties.limits.maxImageDimension2D;
 
-        // Application can't function without geometry shaders
-        if (!deviceFeatures.geometryShader) {
-            return 0;
-        }
+        // Application can't function without geometry shaders.
+        // NOTE: GPUs doesn't support this feature. Turn this condition off temporarily in order to follow the tutorial.
+        // Come back and find alternatives to geometryShare.
+//        if (!deviceFeatures.geometryShader) {
+//            return 0;
+//        }
 
         return score;
     }
@@ -269,6 +308,7 @@ private:
             DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
         }
 
+        vkDestroyDevice(logicalDevice, nullptr);
         vkDestroyInstance(instance, nullptr);
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -294,10 +334,12 @@ private:
         createInfo.pApplicationInfo = &appInfo;
         createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 
-        auto requiredExtensions = getRequiredExtensions();
+        vector<const char*> requiredExtensions = getRequiredExtensions();
 
+        // Temporarily disable this for now
         createInfo.enabledExtensionCount = (uint32_t) requiredExtensions.size();
         createInfo.ppEnabledExtensionNames = requiredExtensions.data();
+//        createInfo.enabledExtensionCount = 0;
 
         // Include Validation layer names and add a debug messenger if validation layers are enabled
         VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};

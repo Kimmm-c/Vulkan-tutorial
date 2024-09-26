@@ -7,8 +7,19 @@
 #include <cstdlib>
 #include <vector>
 #include <cstring>
+#include <map>
+#include <optional>
 
 using namespace std;
+
+struct QueueFamilyIndices {
+    // optional data type indicates that the value of the variable could be absent or undefined.
+    optional<uint32_t> graphicsFamily;
+
+    bool isComplete() {
+        return graphicsFamily.has_value();
+    }
+};
 
 /**
  * @brief Set up a debug messenger in a Vulkan application.
@@ -20,10 +31,9 @@ using namespace std;
  * @param pDebugMessenger A pointer to where the created debug messenger handle is stored, after successfully created.
  * @return
  */
-VkResult CreateDebugUtilsMessengerEXT(VkInstance instance
-                                      , const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo
-                                      , const VkAllocationCallbacks* pAllocator
-                                      , VkDebugUtilsMessengerEXT* pDebugMessenger) {
+VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
+                                      const VkAllocationCallbacks *pAllocator,
+                                      VkDebugUtilsMessengerEXT *pDebugMessenger) {
     /*
      * Retrieve the address of the Vulkan function vkCreateDebugUtilsMessengerEXT.
      *
@@ -53,11 +63,11 @@ VkResult CreateDebugUtilsMessengerEXT(VkInstance instance
  * @param debugMessenger The created debug messenger.
  * @param pAllocator An optional param for custom memory allocation. Usually a nullptr.
  */
-void DestroyDebugUtilsMessengerEXT(VkInstance instance
-                                   , VkDebugUtilsMessengerEXT debugMessenger
-                                   , const VkAllocationCallbacks* pAllocator) {
+void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger,
+                                   const VkAllocationCallbacks *pAllocator) {
     // Similar to vkCreateDebugUtilsMessengerEXT, vkDestroyDebugUtilsMessengerEXT has to be loaded using vkGetInstanceProcAddr.
-    auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+    auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance,
+                                                                            "vkDestroyDebugUtilsMessengerEXT");
     if (func != nullptr) {
         func(instance, debugMessenger, pAllocator);
     }
@@ -94,10 +104,8 @@ public:
      * @return a boolean indicating if the Vulkan call that triggered the validation layer message should be aborted.
      */
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-            VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity
-            , VkDebugUtilsMessageTypeFlagsEXT messageType
-            , const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData
-            , void* pUserData) {
+            VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
+            const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData) {
         cerr << "Validation layer: " << pCallbackData->pMessage << endl;
 
         return VK_FALSE;
@@ -142,12 +150,22 @@ private:
         vector<VkPhysicalDevice> devices(deviceCount);
         vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
-        // Assign only the valid physical device to physicalDevice
-        for (const auto& device : devices) {
-            if (isDeviceSuitable(device)) {
-                physicalDevice = device;
-                break;
-            }
+        /*
+         * Rank the devices from lowest-suitable score to highest-suitable score.
+         * Pick the one with the highest score.
+         */
+        // Use an ordered map to automatically sort candidates by increasing score
+        multimap<int, VkPhysicalDevice> candidates;
+        for (const auto &device: devices) {
+            int score = rateDeviceSuitability(device);
+            candidates.insert(make_pair(score, device));
+        }
+
+        // Check whether the best candidate is suitable
+        if (candidates.rbegin()->first > 0) {
+            physicalDevice = candidates.rbegin()->second;
+        } else {
+            throw runtime_error("Failed to find a suitable GPU");
         }
 
         // Raise an error if unable to find a suitable GPU for the instance.
@@ -156,8 +174,64 @@ private:
         }
     }
 
-    bool isDeviceSuitable(VkPhysicalDevice) {
-        return true;
+    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+        QueueFamilyIndices indices;
+
+        // Query for available queues
+        uint32_t queueFamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+        vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+        // Find a queue family that support VK_QUEUE_GRAPHICS_BIT and assign its index to graphicsFamily
+        int i = 0;
+        for (const auto& queueFamily : queueFamilies) {
+            if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                indices.graphicsFamily = i;
+            }
+
+            if (indices.isComplete()) {
+                break;
+            }
+
+            i++;
+        }
+
+        return indices;
+    }
+
+    int rateDeviceSuitability(VkPhysicalDevice device) {
+        // Query for the device details
+        VkPhysicalDeviceProperties deviceProperties;
+        vkGetPhysicalDeviceProperties(device, &deviceProperties);
+
+        // Query for device optional features
+        VkPhysicalDeviceFeatures deviceFeatures;
+        vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+        int score = 0;
+
+        // Discrete GPUs have a significant performance advantage
+        if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+            score += 1000;
+        }
+
+        // Maximum possible size of textures affects graphics quality
+        score += deviceProperties.limits.maxImageDimension2D;
+
+        // Application can't function without geometry shaders
+        if (!deviceFeatures.geometryShader) {
+            return 0;
+        }
+
+        return score;
+    }
+
+    bool isDeviceSuitable(VkPhysicalDevice device) {
+        QueueFamilyIndices indices = findQueueFamilies(device);
+
+        return indices.isComplete();
     }
 
     void setupDebugMessenger() {
@@ -171,11 +245,15 @@ private:
         };
     }
 
-    void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
+    void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT &createInfo) {
         createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-        createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-        createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        createInfo.messageSeverity =
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        createInfo.messageType =
+                VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
         createInfo.pfnUserCallback = debugCallback;
         createInfo.pUserData = nullptr; // Optional
     }
@@ -228,7 +306,7 @@ private:
             createInfo.ppEnabledLayerNames = validationLayers.data();
 
             populateDebugMessengerCreateInfo(debugCreateInfo);
-            createInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT*) &debugCreateInfo;
+            createInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT *) &debugCreateInfo;
         } else {
             createInfo.enabledLayerCount = 0;
 
@@ -267,7 +345,7 @@ private:
      *
      * @return A vector of required extensions.
      */
-    vector<const char*> getRequiredExtensions() {
+    vector<const char *> getRequiredExtensions() {
         uint32_t glfwExtensionCount = 0;
         const char **glfwExtensions;
 
@@ -304,10 +382,10 @@ private:
         vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
 
         // Check whether all the layers in validation layers exist in available layers
-        for (const char* layerName : validationLayers) {
+        for (const char *layerName: validationLayers) {
             bool layerFound = false;
 
-            for (const auto& layerProperties : availableLayers) {
+            for (const auto &layerProperties: availableLayers) {
                 if (strcmp(layerName, layerProperties.layerName) == 0) {
                     layerFound = true;
                     break;

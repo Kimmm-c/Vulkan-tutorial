@@ -9,15 +9,18 @@
 #include <cstring>
 #include <map>
 #include <optional>
+#include <set>
 
 using namespace std;
 
 struct QueueFamilyIndices {
     // optional data type indicates that the value of the variable could be absent or undefined.
     optional<uint32_t> graphicsFamily;
+    optional<uint32_t> presentFamily;
 
     bool isComplete() {
-        return graphicsFamily.has_value();
+        return graphicsFamily.has_value()
+               && presentFamily.has_value();
     }
 };
 
@@ -80,7 +83,8 @@ class TriangleApp {
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice logicalDevice; // Logical device
     VkQueue graphicsQueue;
-//    vector<const char*> requiredExtensions;
+    VkQueue presentQueue;
+    VkSurfaceKHR surface;
 
     // Conditionally turn on the validation layers if the program is compiled in debug mode. Otherwise, turn off the validation layers to improve performance.
     const vector<const char *> validationLayers{"VK_LAYER_KHRONOS_validation"};
@@ -133,6 +137,7 @@ private:
     void initVulkan() {
         // Create Vulkan lib
         createInstance();
+        createSurface();
         setupDebugMessenger();
 
         // Pick a physical device (a graphic card) that supports the Vulkan library features.
@@ -142,17 +147,28 @@ private:
         createLogicalDevice();
     }
 
+    void createSurface() {
+        if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+            throw runtime_error("Failed to create window surface");
+        }
+    }
+
     void createLogicalDevice() {
         // Specify queue info and create queues
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 
-        VkDeviceQueueCreateInfo queueCreateInfo{};
-        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value(); // For now, we're only interested in the queue with graphics capabilities.
-        queueCreateInfo.queueCount = 1;
+        vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+        set<uint32_t> uniqueQueueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
 
         float queuePriority = 1.0f; // This priority will influence the scheduling of command buffer execution.
-        queueCreateInfo.pQueuePriorities = &queuePriority;
+        for (uint32_t queueFamily : uniqueQueueFamilies) {
+            VkDeviceQueueCreateInfo queueCreateInfo{};
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.queueFamilyIndex = queueFamily;
+            queueCreateInfo.queueCount = 1;
+            queueCreateInfo.pQueuePriorities = &queuePriority;
+            queueCreateInfos.push_back(queueCreateInfo);
+        }
 
         // Specify required device features
         VkPhysicalDeviceFeatures deviceFeatures{};
@@ -161,8 +177,8 @@ private:
         // Creating the Logical device
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        createInfo.pQueueCreateInfos = &queueCreateInfo;
-        createInfo.queueCreateInfoCount = 1;
+        createInfo.pQueueCreateInfos = queueCreateInfos.data();
+        createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
         createInfo.pEnabledFeatures = &deviceFeatures;
 
         if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &logicalDevice)) {
@@ -171,6 +187,7 @@ private:
 
         // Retrieve queue for later interactions
         vkGetDeviceQueue(logicalDevice, indices.graphicsFamily.value(), 0, &graphicsQueue);
+        vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &presentQueue);
     }
 
     void pickPhysicalDevice() {
@@ -228,6 +245,14 @@ private:
                 indices.graphicsFamily = i;
             }
 
+            // Check whether the queue family support presentation
+            VkBool32 presentSupport = false;
+            vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
+            if (presentSupport) {
+                indices.presentFamily = i;
+            }
+
+            // Stop when required queue families are found
             if (indices.isComplete()) {
                 break;
             }
@@ -257,7 +282,7 @@ private:
         // Maximum possible size of textures affects graphics quality
         score += deviceProperties.limits.maxImageDimension2D;
 
-        // Application can't function without geometry shaders.
+        // This application can't function without geometry shaders.
         // NOTE: GPUs doesn't support this feature. Turn this condition off temporarily in order to follow the tutorial.
         // Come back and find alternatives to geometryShare.
 //        if (!deviceFeatures.geometryShader) {
@@ -309,6 +334,7 @@ private:
         }
 
         vkDestroyDevice(logicalDevice, nullptr);
+        vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyInstance(instance, nullptr);
         glfwDestroyWindow(window);
         glfwTerminate();
@@ -334,7 +360,7 @@ private:
         createInfo.pApplicationInfo = &appInfo;
         createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 
-        vector<const char*> requiredExtensions = getRequiredExtensions();
+        vector<const char *> requiredExtensions = getRequiredExtensions();
 
         // Temporarily disable this for now
         createInfo.enabledExtensionCount = (uint32_t) requiredExtensions.size();

@@ -10,6 +10,8 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <limits>
+#include <algorithm>
 
 using namespace std;
 
@@ -91,6 +93,7 @@ class TriangleApp {
     VkQueue graphicsQueue;
     VkQueue presentQueue;
     VkSurfaceKHR surface;
+    VkSwapchainKHR swapChain;
 
     // Conditionally turn on the validation layers if the program is compiled in debug mode. Otherwise, turn off the validation layers to improve performance.
     const vector<const char *> validationLayers{"VK_LAYER_KHRONOS_validation"};
@@ -154,6 +157,89 @@ private:
 
         // Create a logical device. This device is the middle layer/translator that enables the communication between your app and the physical device.
         createLogicalDevice();
+
+        createSwapChain();
+    }
+
+    void createSwapChain() {
+        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+
+        VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+        VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+        VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+
+        /*
+         * Specify the number of images in the swap chain.
+         *
+         * Why an extra image is necessary?
+         * Because minImageCount = 2 images (double buffering), 1 is being displayed to the screen while the other is
+         * being rendered to. This may lead to synchronization issue where the application has to wait for the currently
+         * displayed image to finish presenting before rendering the next image, causing delays.
+         *
+         * Adding an extra image means triple buffering, allowing overlap in rendering process, where:
+         * 1 image being displayed on screen.
+         * 1 image being rendered by the GPU.
+         * 1 image available for the application to start rendering as soon as it finished its current rendering work.
+         */
+        uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+
+        // If maxImageCount exists, make sure the image count doesn't exceed the maximumImageCount.
+        if (swapChainSupport.capabilities.maxImageCount > 0 &&
+            imageCount > swapChainSupport.capabilities.maxImageCount) {
+            imageCount = swapChainSupport.capabilities.maxImageCount;
+        }
+
+        // Create the swap chain
+        VkSwapchainCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface = surface;
+        createInfo.minImageCount = imageCount;
+        createInfo.imageFormat = surfaceFormat.format;
+        createInfo.imageColorSpace = surfaceFormat.colorSpace;
+        createInfo.imageExtent = extent;
+        createInfo.presentMode = presentMode;
+
+        // Specify the number of layers each image consists of.
+        createInfo.imageArrayLayers = 1;
+
+        // Specify the kind of operations we're using the swap chain for.
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        // Specify how swap chain images are handled across different queue families. In this case, graphics and presentation queue families.
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+        uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+
+        // If graphics queue family is not the same as present queue family, set sharing mode to Concurrent to allow
+        // using images across multiple queue families (no explicit ownership transfer). Otherwise, set image sharing
+        // mode to Exclusive to ensure an image is owned by one queue family at a time (ownership must be explicitly
+        // transferred before the image can be used by another queue family).
+        if (indices.graphicsFamily != indices.presentFamily) {
+            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            createInfo.queueFamilyIndexCount = 2;
+            createInfo.pQueueFamilyIndices = queueFamilyIndices;
+        } else {
+            createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            createInfo.queueFamilyIndexCount = 0;       // Optional
+            createInfo.pQueueFamilyIndices = nullptr;   // Optional
+        }
+
+        // Specify transform (like rotation, horizontal flip, etc...)
+        createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+
+        // Specify if alpha channel should be used for blending with other windows in the window system.
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; // Ignore the alpha channel.
+
+        // Enable clipping to ignore the color of pixels that are obscured when being hidden by another window.
+        createInfo.clipped = VK_TRUE;
+
+        // The swap chain may become invalid or unoptimized while the app is running (eg: when the window is resized).
+        // This field allows us to re-create another swap chain that reference to the old swap chain.
+        // Note: leave it alone for now.
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        if (vkCreateSwapchainKHR(logicalDevice, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
+            throw runtime_error("Failed to create swap chain");
+        }
     }
 
     void createSurface() {
@@ -236,6 +322,105 @@ private:
         // Raise an error if unable to find a suitable GPU for the instance.
         if (physicalDevice == VK_NULL_HANDLE || !isDeviceSuitable(physicalDevice)) {
             throw runtime_error("Failed to find a suitable GPU");
+        }
+    }
+
+    /**
+     * @brief This function sets up the surface format (color depth) of the swap chain.
+     *
+     * Note: Each VkSurfaceFormatKHR entry contains a format and a colorSpace member.
+     * The format member specifies the color channels and types.
+     * For example, VK_FORMAT_B8G8R8A8_SRGB means that we store the B, G, R and alpha channels in that order with an 8
+     * bit unsigned integer for a total of 32 bits per pixel. The colorSpace member indicates if the sRGB color space is
+     * supported or not using the VK_COLOR_SPACE_SRGB_NONLINEAR_KHR flag. Note that this flag used to be called
+     * VK_COLORSPACE_SRGB_NONLINEAR_KHR in old versions of the specification.
+     *
+     * @param availableFormats The swap chain supported formats.
+     * @return A VkSurfaceFormatKHR struct, representing the selected format.
+     */
+    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const vector<VkSurfaceFormatKHR> &availableFormats) {
+        // We want to use sRBG color space. Therefore, we want to check if the sRBG color space is supported
+        // AND if the format used for such color space is available.
+        for (const auto &availableFormat: availableFormats) {
+            if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
+                availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                return availableFormat;
+            }
+        }
+
+        return availableFormats[0];
+    }
+
+    /**
+     * @brief This function selects the preferred present mode.
+     *
+     * Note: Presentation mode is important because it represents the conditions for showing images to the screen.
+     *
+     * There are 4 present modes available in Vulkan:
+     * 1. VK_PRESENT_MODE_IMMEDIATE_KHR: Images submitted by your application are transferred to the screen right away,
+     * which may result in tearing.
+     * 2. VK_PRESENT_MODE_FIFO_KHR: The swap chain is a queue where the display takes an image from the front of the
+     * queue when the display is refreshed. The program inserts rendered images at the back of the queue. If the
+     * queue is full then the program has to wait. This is most similar to vertical sync as found in modern games. The
+     * moment that the display is refreshed is known as "vertical blank".
+     * 3. VK_PRESENT_MODE_FIFO_RELAXED_KHR: This mode only differs from the previous one if the application is late and
+     * the queue was empty at the last vertical blank. Instead of waiting for the next vertical blank, the image is
+     * transferred right away when it finally arrives. This may result in visible tearing.
+     * 4. VK_PRESENT_MODE_MAILBOX_KHR: This is another variation of the second mode. Instead of blocking the application
+     * when the queue is full, the images that are already queued are simply replaced with the newer ones. This mode can
+     * be used to render frames as fast as possible while still avoiding tearing, resulting in fewer latency issues than
+     * standard vertical sync. This is commonly known as "triple buffering", although the existence of three buffers
+     * alone does not necessarily mean that the framerate is unlocked.
+     *
+     * @param availablePresentModes A list of available present modes. Usually the presentModes member variable of SwapChainSupportDetails struct.
+     * @return A VkPresentModeKHR struct, representing the selected present mode.
+     */
+    VkPresentModeKHR chooseSwapPresentMode(const vector<VkPresentModeKHR> &availablePresentModes) {
+        for (const auto &availablePresentMode: availablePresentModes) {
+            // We prefer VK_PRESENT_MODE_MAILBOX_KHR for its low latency.
+            if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+                return availablePresentMode;
+            }
+        }
+
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    /**
+     * @brief Return the current extent (swap chain image resolution) if available. Otherwise, manually determine the
+     * resolution.
+     *
+     * Note: The swap extent is the resolution of the swap chain images and it’s almost always exactly equal to the
+     * resolution of the window that we’re drawing to in pixels. The range of the possible resolutions is defined in the
+     * VkSurfaceCapabilitiesKHR structure.
+     *
+     * @param capabilities A VkSurfaceCapabilitiesKHR struct, representing the capabilities of the surface (min/max image size, current extent/resolution of the surface)
+     * @return A VkExtent2D struct, representing a selected resolution.
+     */
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities) {
+        // numeric_limits<uint32_t>::max(): returns the maximum possible value for the uint32_t type, which is 2^32-1.
+        // Why use numeric_limits<uint32_t>::max() to determine if the surface provides a fixed resolution?
+        // Because Vulkan sets currentExtent.width and currentExtent.height to the maximum possible value of type uint32_t
+        // if the surface doesn't provide a fixed resolution.
+        if (capabilities.currentExtent.width != numeric_limits<uint32_t>::max()) {
+            return capabilities.currentExtent;
+        } else {
+            int width, height;
+            // Query the actual framebuffer size from the window.
+            glfwGetFramebufferSize(window, &width, &height);
+
+            VkExtent2D actualExtent = {
+                    static_cast<uint32_t>(width),
+                    static_cast<uint32_t>(height)
+            };
+
+            // The clamp function is used here to bound the values of width and height between the allowed minimum and maximum extents that are supported.
+            actualExtent.width = clamp(actualExtent.width, capabilities.minImageExtent.width,
+                                       capabilities.maxImageExtent.width);
+            actualExtent.height = clamp(actualExtent.height, capabilities.minImageExtent.height,
+                                        capabilities.maxImageExtent.height);
+
+            return actualExtent;
         }
     }
 
@@ -410,6 +595,7 @@ private:
             DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
         }
 
+        vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
         vkDestroyDevice(logicalDevice, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyInstance(instance, nullptr);

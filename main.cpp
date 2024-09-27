@@ -24,6 +24,12 @@ struct QueueFamilyIndices {
     }
 };
 
+struct SwapChainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;  // Eg: min/max number of images in swap chain, min/max width and height of images, etc..
+    vector<VkSurfaceFormatKHR> formats;     // Eg: pixel format, color space
+    vector<VkPresentModeKHR> presentModes;
+};
+
 /**
  * @brief Set up a debug messenger in a Vulkan application.
  * It handles the creation of a debug callback that allows you to receive diagnostic messages from the Vulkan API, such as validation errors, warnings, or performance issues.
@@ -94,6 +100,9 @@ class TriangleApp {
     const bool enableValidationLayers = true;
 #endif // NDEBUG
 
+    const vector<const char *> deviceExtensions = {
+            VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    };
 public:
     void run() {
         initWindow();
@@ -161,7 +170,7 @@ private:
         set<uint32_t> uniqueQueueFamilies = {indices.graphicsFamily.value(), indices.presentFamily.value()};
 
         float queuePriority = 1.0f; // This priority will influence the scheduling of command buffer execution.
-        for (uint32_t queueFamily : uniqueQueueFamilies) {
+        for (uint32_t queueFamily: uniqueQueueFamilies) {
             VkDeviceQueueCreateInfo queueCreateInfo{};
             queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
             queueCreateInfo.queueFamilyIndex = queueFamily;
@@ -179,6 +188,8 @@ private:
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+        createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
         createInfo.pEnabledFeatures = &deviceFeatures;
 
         if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &logicalDevice)) {
@@ -223,9 +234,37 @@ private:
         }
 
         // Raise an error if unable to find a suitable GPU for the instance.
-        if (physicalDevice == VK_NULL_HANDLE) {
+        if (physicalDevice == VK_NULL_HANDLE || !isDeviceSuitable(physicalDevice)) {
             throw runtime_error("Failed to find a suitable GPU");
         }
+    }
+
+    SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
+        SwapChainSupportDetails details;
+
+        // Retrieve surface capabilities
+        // This function takes the specified VkPhysicalDevice and VkSurfaceKHR window surface into account when determining the supported capabilities.
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
+
+        // Querying the supported surface formats
+        uint32_t formatCount;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+        if (formatCount != 0) {
+            details.formats.resize(formatCount);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+        }
+
+        // Querying the supported present modes
+        uint32_t presentModeCount;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+
+        if (presentModeCount != 0) {
+            details.presentModes.resize(presentModeCount);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+        }
+
+        return details;
     }
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
@@ -295,7 +334,45 @@ private:
     bool isDeviceSuitable(VkPhysicalDevice device) {
         QueueFamilyIndices indices = findQueueFamilies(device);
 
-        return indices.isComplete();
+        bool extensionsSupported = checkDeviceExtensionSupport(device);
+
+        bool swapChainAdequate = false;
+        if (extensionsSupported) {
+            SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+            swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+        }
+
+        return indices.isComplete()
+               && extensionsSupported
+               && swapChainAdequate;
+    }
+
+    /**
+     * @brief Retrieve all the available extensions for the physical device. Return true if they support the required extensions. Otherwise, return False.
+     *
+     * @param device A physical device.
+     * @return True if they support the required extensions. Otherwise, return False.
+     *
+     */
+    bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
+        // Retrieve a list of supported extensions.
+        // VkExtensionProperties struct contains the name and version of an extension.
+        uint32_t extensionCount = 0;
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+        vector<VkExtensionProperties> availableExtensions(
+                extensionCount); // Allocate an array to hold extension properties
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount,
+                                             availableExtensions.data()); // Query for the extension details
+
+        // Copy the list of required extensions. Remove an extension from the list if they are supported.
+        // If the list is empty after exiting the loop, it means all the required extensions are supported.
+        set<string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+
+        for (const auto &extension: availableExtensions) {
+            requiredExtensions.erase(extension.extensionName);
+        }
+
+        return requiredExtensions.empty();
     }
 
     void setupDebugMessenger() {
@@ -385,20 +462,20 @@ private:
             throw runtime_error("failed to create instance");
         }
 
-        /*
-         * To retrieve a list of supported extensions
-         * VkExtentionProperties struct contains the name and version of an extension
-         */
-        uint32_t extensionCount = 0;
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-        vector<VkExtensionProperties> extensions(extensionCount); // Allocate an array to hold extension properties
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount,
-                                               extensions.data()); // Query for the extension details
-
-        cout << "Extension: " << endl;
-        for (const auto &extension: extensions) {
-            cout << extension.extensionName << endl;
-        }
+//        /*
+//         * To retrieve a list of supported extensions
+//         * VkExtentionProperties struct contains the name and version of an extension
+//         */
+//        uint32_t extensionCount = 0;
+//        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+//        vector<VkExtensionProperties> extensions(extensionCount); // Allocate an array to hold extension properties
+//        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount,
+//                                               extensions.data()); // Query for the extension details
+//
+//        cout << "Extension: " << endl;
+//        for (const auto &extension: extensions) {
+//            cout << extension.extensionName << endl;
+//        }
     }
 
     /**

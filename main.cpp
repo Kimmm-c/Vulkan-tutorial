@@ -90,10 +90,18 @@ class TriangleApp {
     VkDebugUtilsMessengerEXT debugMessenger;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
     VkDevice logicalDevice; // Logical device
+
+    // Queue families
     VkQueue graphicsQueue;
     VkQueue presentQueue;
+
     VkSurfaceKHR surface;
+
+    // Swap chain and its settings
     VkSwapchainKHR swapChain;
+    vector<VkImage> swapChainImages;
+    VkFormat swapChainImageFormat;
+    VkExtent2D swapChainExtent;
 
     // Conditionally turn on the validation layers if the program is compiled in debug mode. Otherwise, turn off the validation layers to improve performance.
     const vector<const char *> validationLayers{"VK_LAYER_KHRONOS_validation"};
@@ -165,8 +173,10 @@ private:
         SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
 
         VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+        swapChainImageFormat = surfaceFormat.format;
         VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
         VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+        swapChainExtent = extent;
 
         /*
          * Specify the number of images in the swap chain.
@@ -240,6 +250,11 @@ private:
         if (vkCreateSwapchainKHR(logicalDevice, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
             throw runtime_error("Failed to create swap chain");
         }
+
+        // Retrieve the images of the swap chain for later interaction
+        vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, nullptr);
+        swapChainImages.resize(imageCount);
+        vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, swapChainImages.data());
     }
 
     void createSurface() {

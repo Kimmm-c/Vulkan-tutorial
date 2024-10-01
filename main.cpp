@@ -225,6 +225,11 @@ private:
     }
 
     void createGraphicsPipeline() {
+        /*
+         * ************************ *
+         * PREPARE PIPELINE SHADERS *
+         * ************************ *
+         */
         // Extract the shader bytecodes
         auto vertShaderCode = readFile("vert.spv");
         auto fragShaderCode = readFile("frag.spv");
@@ -250,6 +255,90 @@ private:
         fragShaderStageInto.pName = "main";
 
         VkPipelineShaderStageCreateInfo shaderStage[] = {vertShaderStageInto, fragShaderStageInto};
+
+
+        /*
+         * ******************************************************************* *
+         * SPECIFY THE STRUCTURE OF THE VERTICES PASSED INTO THE VERTEX SHADER *
+         * ******************************************************************* *
+         */
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertexInputInfo.vertexAttributeDescriptionCount = 0; // leave untouched for now
+        vertexInputInfo.pVertexBindingDescriptions = nullptr; // optional
+        vertexInputInfo.vertexAttributeDescriptionCount = 0; // leave untouched for now
+        vertexInputInfo.pVertexBindingDescriptions = nullptr; // optional
+
+
+        /*
+         * ******************** *
+         * CONFIG DYNAMIC STATE *
+         * ******************** *
+         *
+         * Note: This step is required only when you want some state of the pipeline to open for change at rendering
+         * time. This basically tells Vulkan to ignore the default configuration of these state and allow you to specify
+         * the data at draw time.
+         */
+        vector<VkDynamicState> dynamicStates = {
+                VK_DYNAMIC_STATE_VIEWPORT,
+                VK_DYNAMIC_STATE_SCISSOR
+        };
+
+        VkPipelineDynamicStateCreateInfo dynamicState{};
+        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+        dynamicState.pDynamicStates = dynamicStates.data();
+
+
+        /*
+         * ************************************ *
+         * CREATE PIPELINE INPUT ASSEMBLY STATE *
+         * ************************************ *
+         *
+         * This state specifies:
+         * 1. What kind of geometry will be drawn from the vertices.
+         * 2. If primitive restart should be enabled.
+         */
+
+        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; // This tells the shader to draw triangle from every 3 vertices without reuse.
+        inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+
+        /*
+         * ******************** *
+         * SPECIFY THE VIEWPORT *
+         * ******************** *
+         */
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = (float) swapChainExtent.width;
+        viewport.height = (float) swapChainExtent.height;
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+
+
+        /*
+         * ******************* *
+         * SPECIFY THE SCISSOR *
+         * ******************* *
+         *
+         * Scissor rectangle defines which regions pixels will actually be stored. Any pixels outside the scissor
+         * rectangle will be discarded by the rasterizer. To draw the entire framebuffer, we would specify the scissor
+         * rectangle to cover it completely.
+         */
+        VkRect2D scissor{};
+        scissor.offset = {0, 0};
+        scissor.extent = swapChainExtent; // set scissor resolution to be equal to swap chain image resolution.
+
+        VkPipelineViewportStateCreateInfo viewportState{};
+        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewportState.viewportCount = 1;
+        viewportState.pViewports = &viewport;
+        viewportState.scissorCount = 1;
+        viewportState.pScissors = &scissor;
 
         // Destroy the shader modules
         vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);

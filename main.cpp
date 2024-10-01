@@ -340,6 +340,43 @@ private:
         viewportState.scissorCount = 1;
         viewportState.pScissors = &scissor;
 
+        /*
+         * ********************* *
+         * CREATE THE RASTERIZER *
+         * ********************* *
+         *
+         * The rasterizer takes in the geometry drawn from vertices by the vertex shader, turns it into fragments to
+         * be colored by the fragment shader.
+         */
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.depthClampEnable = VK_FALSE; //
+        rasterizer.rasterizerDiscardEnable = VK_FALSE; // enable the output to the framebuffer.
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL; // Fill the area of the polygon with fragments.
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.depthBiasEnable = VK_FALSE;
+        rasterizer.depthBiasConstantFactor = 0.0f; // Optional
+        rasterizer.depthBiasClamp = 0.0f; // Optional
+        rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
+
+
+        /*
+         * ******************** *
+         * CONFIG MULTISAMPLING *
+         * ******************** *
+         */
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisampling.minSampleShading = 1.0f; // Optional
+        multisampling.pSampleMask = nullptr; // Optional
+        multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
+        multisampling.alphaToOneEnable = VK_FALSE; // Optional
+
+
         // Destroy the shader modules
         vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
         vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);

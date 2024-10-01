@@ -12,6 +12,7 @@
 #include <set>
 #include <limits>
 #include <algorithm>
+#include <fstream>
 
 using namespace std;
 
@@ -116,6 +117,33 @@ class TriangleApp {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
 public:
+    /**
+     * @brief Read all the bytes from the specified file and return them in a byte array.
+     *
+     * @param filename a string representing the file name.
+     * @return An array holding bytes read from the file.
+     */
+    static vector<char> readFile(const string& filename) {
+        // ate: start reading at the end of the file. Reading from the end allows us to know the size of the file based
+        // on the read position and allocate a buffer.
+        // binary: read the file as binary file (avoid text transformation)
+        ifstream file(filename, ios::ate | ios::binary);
+
+        if (!file.is_open()) {
+            throw runtime_error("Failed to open file.");
+        }
+
+        size_t fileSize = (size_t) file.tellg();
+        vector<char> buffer(fileSize);
+
+        // After allocating the buffer, we seek back to the beginning of the file and start reading
+        file.seekg(0);
+        file.read(buffer.data(), fileSize);
+
+        file.close();
+        return buffer;
+    }
+
     void run() {
         initWindow();
         initVulkan();
@@ -173,7 +201,8 @@ private:
     }
 
     void createGraphicsPipeline() {
-
+        auto vertShaderCode = readFile("vert.spv");
+        auto fragShaderCode = readFile("frag.spv");
     }
 
     /**

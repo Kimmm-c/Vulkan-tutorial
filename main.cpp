@@ -123,7 +123,7 @@ public:
      * @param filename a string representing the file name.
      * @return An array holding bytes read from the file.
      */
-    static vector<char> readFile(const string& filename) {
+    static vector<char> readFile(const string &filename) {
         // ate: start reading at the end of the file. Reading from the end allows us to know the size of the file based
         // on the read position and allocate a buffer.
         // binary: read the file as binary file (avoid text transformation)
@@ -200,9 +200,60 @@ private:
         createGraphicsPipeline();
     }
 
+    /**
+     * @brief Wrap the shader bytecode in a VkShaderModule and return the module to be used in the pipeline.
+     *
+     * Note: VkShaderModule serves as an abstraction layer between raw shader bytecode and Vulkan's pipeline system.
+     * It ensures platform compatibility and proper integration into the graphics pipeline.
+     *
+     * @param code The shader bytecode buffer.
+     * @return A VkShaderModule struct that wraps around the shader bytecode.
+     */
+    VkShaderModule createShaderModule(const vector<char> &code) {
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        // Cast the bytecode pointer to point to uint32_t data type.
+        createInfo.pCode = reinterpret_cast<const uint32_t *>(code.data());
+
+        VkShaderModule shaderModule;
+        if (vkCreateShaderModule(logicalDevice, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            throw runtime_error("Failed to create shader module");
+        }
+
+        return shaderModule;
+    }
+
     void createGraphicsPipeline() {
+        // Extract the shader bytecodes
         auto vertShaderCode = readFile("vert.spv");
         auto fragShaderCode = readFile("frag.spv");
+
+        // Create the shader module that wraps around the shader bytecode.
+        // This wrapper ensures the proper integration of shader bytecode into Vulkan's pipeline and therefore can be
+        // destroyed right after creating the pipeline.
+        VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+        VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        // A shader has to be assigned a specific stage in the pipeline
+        VkPipelineShaderStageCreateInfo vertShaderStageInto{};
+        vertShaderStageInto.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInto.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInto.module = vertShaderModule;
+        // This tells Vulkan the function to invoke the shader
+        vertShaderStageInto.pName = "main";
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInto{};
+        fragShaderStageInto.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInto.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInto.module = fragShaderModule;
+        fragShaderStageInto.pName = "main";
+
+        VkPipelineShaderStageCreateInfo shaderStage[] = {vertShaderStageInto, fragShaderStageInto};
+
+        // Destroy the shader modules
+        vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
+        vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
     }
 
     /**
@@ -680,7 +731,7 @@ private:
             DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
         }
 
-        for (auto imageView : swapChainImageViews) {
+        for (auto imageView: swapChainImageViews) {
             vkDestroyImageView(logicalDevice, imageView, nullptr);
         }
         vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
